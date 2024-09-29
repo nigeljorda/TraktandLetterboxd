@@ -89,7 +89,7 @@ def mark_watched_batch(movies, shows, watched_at, access_token, client_id, retri
 
         if response.status_code == 201:
             print("Successfully marked all movies and shows as watched in one request.")
-            return
+            return True
         elif response.status_code == 429:
             retry_after = int(response.headers.get('Retry-After', 1))
             print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
@@ -97,31 +97,88 @@ def mark_watched_batch(movies, shows, watched_at, access_token, client_id, retri
             attempt += 1
         else:
             print(f"Failed to mark items as watched. Response: {response.status_code} - {response.text}")
-            return
+            return False
 
     print(f"Failed to mark items after {retries} attempts due to rate limits.")
+    return False
 
 # Function to process the CSV file and collect items for the batch request
-def process_csv(file_path, watched_at, access_token, client_id):
+def process_csv(file_path):
     # Read the CSV file
     data = pd.read_csv(file_path)
 
     # Collect movies and shows
     movies = []
     shows = []
+    letterboxd_urls = {}
 
     # Loop through each row
     for index, row in data.iterrows():
         tmdb_id = row['TMDB ID']
         media_type = row['Type']
+        letterboxd_url = row.get('Letterboxd URL', '')
+        letterboxd_urls[tmdb_id] = letterboxd_url
 
         if media_type == 'movie':
             movies.append(tmdb_id)
         elif media_type == 'show':
             shows.append(tmdb_id)
     
-    # Mark all items as watched in a batch request
-    mark_watched_batch(movies, shows, watched_at, access_token, client_id)
+    return movies, shows, letterboxd_urls
+
+# Function to retrieve watched history from Trakt
+def retrieve_trakt_history(access_token, client_id):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/history"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    all_history = []
+    page = 1
+    while True:
+        response = requests.get(f"{trakt_url}?page={page}&limit=1000", headers=headers)
+        if response.status_code != 200:
+            print(f"Failed to retrieve watched history from Trakt. Response: {response.status_code} - {response.text}")
+            return None
+
+        page_data = response.json()
+        if not page_data:
+            break  # No more history to fetch
+        all_history.extend(page_data)
+        page += 1
+
+    return all_history
+
+# Function to compare the CSV and Trakt history
+def compare_csv_and_history(csv_movies, csv_shows, trakt_history, letterboxd_urls):
+    # Extract the TMDb IDs from the Trakt history
+    trakt_movie_ids = []
+    trakt_show_ids = []
+
+    for item in trakt_history:
+        if 'movie' in item:
+            trakt_movie_ids.append(item['movie']['ids']['tmdb'])
+        elif 'show' in item:
+            trakt_show_ids.append(item['show']['ids']['tmdb'])
+
+    # Compare CSV movies with Trakt movie history
+    missing_movies = [movie for movie in csv_movies if movie not in trakt_movie_ids]
+
+    # Compare CSV shows with Trakt show history
+    missing_shows = [show for show in csv_shows if show not in trakt_show_ids]
+
+    # Report missing items
+    if missing_movies or missing_shows:
+        print("\nThe following items were not marked as watched on Trakt:")
+        for tmdb_id in missing_movies:
+            print(f"Missing Movie - TMDb ID: {tmdb_id}, Letterboxd URL: {letterboxd_urls.get(tmdb_id, 'N/A')}")
+        for tmdb_id in missing_shows:
+            print(f"Missing Show - TMDb ID: {tmdb_id}, Letterboxd URL: {letterboxd_urls.get(tmdb_id, 'N/A')}")
+    else:
+        print("All items were successfully marked as watched on Trakt.")
 
 # Main function to run the script
 if __name__ == "__main__":
@@ -141,10 +198,22 @@ if __name__ == "__main__":
         print("Invalid choice, defaulting to 'now'.")
         watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # Use the .csv from the previous Letterboxd script
+    # Use the .csv file with TMDB IDs
     csv_file_path = 'watched_movies_tmdb.csv'
 
-    # Process the CSV and mark movies/shows as watched in one request
-    process_csv(csv_file_path, watched_at, access_token, client_id)
+    # Process the CSV file and collect items
+    movies, shows, letterboxd_urls = process_csv(csv_file_path)
 
-    print("All movies and shows have been processed.")
+    # Mark movies/shows as watched
+    if mark_watched_batch(movies, shows, watched_at, access_token, client_id):
+        print("Waiting 5 seconds for Trakt to update the history...")
+        time.sleep(5)  # Wait for a few seconds to allow Trakt to update the history
+
+        # Retrieve watched history from Trakt
+        trakt_history = retrieve_trakt_history(access_token, client_id)
+
+        if trakt_history:
+            # Compare CSV items with Trakt history
+            compare_csv_and_history(movies, shows, trakt_history, letterboxd_urls)
+
+    print("All items have been processed.")
