@@ -16,11 +16,6 @@ This repository provides various Python scripts to interact with Letterboxd and 
 
 ## Installation
 
-Before using any of the scripts, make sure to install the required dependencies by running the following command:
-
-```bash
-pip install beautifulsoup4 pandas requests
-
 Trakt.tv API Setup
 
 To use the scripts that interact with Trakt.tv, you will need to set up an API application on Trakt.tv to obtain a Client ID and Client Secret.
@@ -34,3 +29,8 @@ Redirect URI: If you don't have a specific URI, use urn:ietf:wg:oauth:2.0:oob.
 Click Save.
 After creation, you will be provided with a Client ID and a Client Secret.
 You need to include this Client ID and Client Secret in the scripts that interact with Trakt.tv. These values are necessary for authentication when interacting with Trakt's API.
+
+Before using any of the scripts, make sure to install the required dependencies by running the following command:
+
+```bash
+pip3 install beautifulsoup4 pandas requests
