@@ -106,11 +106,17 @@ def add_items_to_trakt_list_with_rank(list_slug, items, access_token, client_id,
         'trakt-api-key': client_id
     }
 
-    # Prepare the payload for adding items in batch with rank
+    # Prepare the payload for adding items in the exact order with rank
     payload = {
-        "movies": [{"ids": {"tmdb": item['tmdb_id']}, "rank": item['rank']} for item in items if item['type'] == 'movie'],
-        "shows": [{"ids": {"tmdb": item['tmdb_id']}, "rank": item['rank']} for item in items if item['type'] == 'show']
+        "movies": [],
+        "shows": []
     }
+    
+    for item in items:
+        if item['type'] == 'movie':
+            payload['movies'].append({"ids": {"tmdb": item['tmdb_id']}, "rank": item['rank']})
+        elif item['type'] == 'show':
+            payload['shows'].append({"ids": {"tmdb": item['tmdb_id']}, "rank": item['rank']})
 
     attempt = 0
 
@@ -118,7 +124,7 @@ def add_items_to_trakt_list_with_rank(list_slug, items, access_token, client_id,
         response = requests.post(trakt_url, headers=headers, json=payload)
 
         if response.status_code == 201:
-            print(f"Successfully added all movies and shows to the list with ranks in one request.")
+            print(f"Successfully added all items (movies and shows) to the list in the correct order with ranks.")
             return response.status_code
         elif response.status_code == 429:
             retry_after = int(response.headers.get('Retry-After', 1))
@@ -150,6 +156,66 @@ def retrieve_trakt_list(list_slug, access_token, client_id):
         print(f"Failed to retrieve list items from Trakt. Response: {response.status_code} - {response.text}")
         return None
 
+# Function to reorder items in the Trakt list to match the CSV order
+def reorder_trakt_list(list_slug, items, access_token, client_id):
+    trakt_url = f"{TRAKT_BASE_URL}/users/me/lists/{list_slug}/items/reorder"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    # Retrieve the current list of items from Trakt
+    list_items = retrieve_trakt_list(list_slug, access_token, client_id)
+    
+    # Map the item ranks based on the CSV file order
+    item_order = []
+    for item in items:
+        for trakt_item in list_items:
+            if 'movie' in trakt_item and trakt_item['movie']['ids']['tmdb'] == item['tmdb_id']:
+                item_order.append(trakt_item['id'])
+            elif 'show' in trakt_item and trakt_item['show']['ids']['tmdb'] == item['tmdb_id']:
+                item_order.append(trakt_item['id'])
+
+    # Prepare the payload for reordering
+    payload = {
+        "rank": item_order  # Use the order from CSV to rank items
+    }
+
+    # Send the reorder request
+    response = requests.post(trakt_url, headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        print("Successfully reordered the list to match the CSV order.")
+    else:
+        print(f"Failed to reorder the list. Response: {response.status_code} - {response.text}")
+
+# Function to compare the items in the CSV with those in the Trakt list
+def compare_trakt_and_csv(csv_items, trakt_items, letterboxd_urls):
+    # Extract the TMDb IDs from the Trakt list items
+    trakt_ids = []
+    for item in trakt_items:
+        if 'movie' in item:
+            trakt_ids.append(item['movie']['ids']['tmdb'])
+        elif 'show' in item:
+            trakt_ids.append(item['show']['ids']['tmdb'])
+
+    # Compare the CSV items with the Trakt list
+    missing_items = []
+    for item in csv_items:
+        if item['tmdb_id'] not in trakt_ids:
+            missing_items.append(item['tmdb_id'])
+    
+    # Report missing items
+    if missing_items:
+        print("\nThe following items were not added to the Trakt list:")
+        for tmdb_id in missing_items:
+            print(f"TMDb ID: {tmdb_id}, Letterboxd URL: {letterboxd_urls.get(tmdb_id, 'No URL found')}")
+        print("\nYou may need to add these items manually, as they do not exist on Trakt.")
+    else:
+        print("All items were successfully added to the Trakt list.")
+
 # Function to process the CSV file and collect items with their rank
 def process_csv_with_rank(file_path):
     data = pd.read_csv(file_path)
@@ -173,39 +239,13 @@ def process_csv_with_rank(file_path):
     
     return items, letterboxd_urls
 
-# Function to compare the items in the CSV with those in the Trakt list
-def compare_trakt_and_csv(csv_items, trakt_items, letterboxd_urls):
-    # Extract the TMDb IDs from the Trakt list items
-    trakt_ids = []
-    for item in trakt_items:
-        if 'movie' in item:
-            trakt_ids.append(item['movie']['ids']['tmdb'])
-        elif 'show' in item:
-            trakt_ids.append(item['show']['ids']['tmdb'])
-
-    # Compare the CSV items with the Trakt list
-    missing_items = []
-    for item in csv_items:
-        if item['tmdb_id'] not in trakt_ids:
-            missing_items.append(item['tmdb_id'])
-    
-    # Report missing items
-    if missing_items:
-        print("\nThe following items were not added to the Trakt list:")
-        for tmdb_id in missing_items:
-            print(f"TMDb ID: {tmdb_id}, Letterboxd URL: {letterboxd_urls[tmdb_id]}")
-        print("\nYou may need to add these items manually, as they do not exist on Trakt.")
-    else:
-        print("All items were successfully added to the Trakt list.")
-
-
 # Main function to run the script
 if __name__ == "__main__":
     # Authenticate with Trakt
     access_token, client_id = authenticate_trakt()
 
     # Process the CSV to get the list of items with their ranks and corresponding Letterboxd URLs
-    csv_file_path = 'list.csv'
+    csv_file_path = 'list.csv'  # Path to the uploaded CSV
     items, letterboxd_urls = process_csv_with_rank(csv_file_path)
 
     # Create a new list on Trakt
@@ -214,12 +254,17 @@ if __name__ == "__main__":
     # Add the items with their ranks to the Trakt list
     add_status = add_items_to_trakt_list_with_rank(list_slug, items, access_token, client_id)
 
-    # If items were added, retrieve the list from Trakt and compare with the CSV
+    # If items were added, retrieve the list from Trakt and reorder the items based on the CSV
     if add_status == 201:
         print("Waiting 5 seconds for Trakt to update the list...")
         time.sleep(5)  # Wait for a few seconds to allow Trakt to update the list
+        reorder_trakt_list(list_slug, items, access_token, client_id)
+        
+        # Retrieve the final list of items after reordering
         trakt_items = retrieve_trakt_list(list_slug, access_token, client_id)
-        if trakt_items:
-            compare_trakt_and_csv(items, trakt_items, letterboxd_urls)
+        
+        # Compare the CSV items with the final Trakt list
+        compare_trakt_and_csv(items, trakt_items, letterboxd_urls)
+    
+    print("All items have been processed and ordered correctly.")
 
-    print("All items have been processed.")
