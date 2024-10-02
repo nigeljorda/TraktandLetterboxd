@@ -1,6 +1,6 @@
 # traktscripts
 
-# Movie and Show Data Management Scripts
+# Scripts to make your life easier on Trakt.tv and Letterboxd.com
 
 This repository provides various Python scripts to interact with Letterboxd and Trakt.tv to manage your watched movie and show data. Below is an overview of what each script does and how you can use them.
 
