@@ -1,11 +1,38 @@
 import requests
 from bs4 import BeautifulSoup
 import csv
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Define the header for the output CSV
 csv_file = "watched_movies_tmdb.csv"
 csv_header = ["Letterboxd URL", "TMDB ID", "Type"]
+
+# Function to extract movie URLs and (optional) ratings from the ratings page
+def extract_ratings(page_url):
+    response = requests.get(page_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    ratings_data = {}
+    
+    # Get all rated movie containers (list items)
+    movie_items = soup.find_all('li', class_='poster-container')
+    
+    for li in movie_items:
+        lazy_load_div = li.find('div', class_='really-lazy-load')
+        if lazy_load_div and lazy_load_div.get('data-target-link'):
+            movie_url = "https://letterboxd.com" + lazy_load_div['data-target-link']
+            rating_tag = li.find('span', class_='rating')
+            if rating_tag:
+                # Find the class that contains 'rated-' and extract the rating value
+                rating_class = next((cls for cls in rating_tag['class'] if 'rated-' in cls), None)
+                if rating_class:
+                    # Convert rating by stripping 'rated-' and dividing by 2 to map to the 10-point scale
+                    letterboxd_rating = float(rating_class.replace('rated-', '')) / 2
+                    ratings_data[movie_url] = letterboxd_rating
+    
+    return ratings_data
+
 
 # Function to extract movie URLs from the main list page
 def extract_movie_urls(page_url):
@@ -18,7 +45,6 @@ def extract_movie_urls(page_url):
     movie_items = soup.find_all('li', class_='poster-container')
     
     for li in movie_items:
-        # Find the movie URL from the 'data-target-link' attribute
         lazy_load_div = li.find('div', class_='really-lazy-load')
         
         if lazy_load_div and lazy_load_div.get('data-target-link'):
@@ -108,11 +134,19 @@ def crawl_detailed_movie_pages(movie_urls):
     return all_movie_data
 
 # Function to save the extracted data to a CSV file
-def save_to_csv(movie_data):
+def save_to_csv(movie_data, ratings_data=None):
+    if ratings_data:
+        csv_header.append("Rating")
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(csv_header)
-        writer.writerows(movie_data)
+        for movie in movie_data:
+            row = list(movie)
+            if ratings_data and movie[0] in ratings_data:
+                # Ensure the rating is a whole number for Trakt (rounded after doubling)
+                trakt_rating = math.ceil(ratings_data[movie[0]] * 2)
+                row.append(trakt_rating)  # Add the Trakt-compliant rating
+            writer.writerow(row)
     
     # Feedback after saving
     print(f"- Movies/shows saved to {csv_file}")
@@ -127,7 +161,7 @@ def get_letterboxd_url():
         try:
             response = requests.get(base_url)
             if response.status_code == 200:
-                return base_url
+                return base_url, username
             else:
                 print(f"Invalid username or the page doesn't exist. Please try again.")
         except requests.RequestException:
@@ -135,10 +169,13 @@ def get_letterboxd_url():
 
 # Main function to run the script
 if __name__ == "__main__":
-    # Get the user's Letterboxd URL
-    base_url = get_letterboxd_url()
+    # Get the user's Letterboxd URL and username
+    base_url, username = get_letterboxd_url()
     
-    # Find the last page number
+    # Ask if the user wants to scrape ratings
+    scrape_ratings = input("Do you want to scrape ratings? (yes/no): ").strip().lower() == "yes"
+    
+    # Find the last page number for watched movies
     last_page = get_last_page(base_url)
     
     # Crawl all pages to collect movie URLs
@@ -147,7 +184,17 @@ if __name__ == "__main__":
     # Crawl detailed movie pages to extract TMDb links
     movie_data = crawl_detailed_movie_pages(movie_urls)
     
+    ratings_data = None
+    if scrape_ratings:
+        # If ratings scraping is selected, scrape from the ratings page
+        ratings_url = f"https://letterboxd.com/{username}/films/by/entry-rating/"
+        ratings_data = {}
+        last_ratings_page = get_last_page(ratings_url)
+        for page in range(1, last_ratings_page + 1):
+            page_url = ratings_url + f"page/{page}/"
+            ratings_data.update(extract_ratings(page_url))
+    
     # Save the data to CSV
-    save_to_csv(movie_data)
+    save_to_csv(movie_data, ratings_data)
 
     print("Script finished.")

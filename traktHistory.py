@@ -102,14 +102,39 @@ def mark_watched_batch(movies, shows, watched_at, access_token, client_id, retri
     print(f"Failed to mark items after {retries} attempts due to rate limits.")
     return False
 
+# Function to mark movies as rated on Trakt
+def import_ratings(movies_with_ratings, access_token, client_id):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/ratings"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    # Prepare the payload for movies ratings
+    payload = {
+        "movies": [{"ids": {"tmdb": movie_id}, "rating": rating} for movie_id, rating in movies_with_ratings.items()]
+    }
+
+    response = requests.post(trakt_url, headers=headers, json=payload)
+    
+    if response.status_code == 201:
+        print("Successfully imported ratings.")
+        return True
+    else:
+        print(f"Failed to import ratings. Response: {response.status_code} - {response.text}")
+        return False
+
 # Function to process the CSV file and collect items for the batch request
 def process_csv(file_path):
     # Read the CSV file
     data = pd.read_csv(file_path)
 
-    # Collect movies and shows
+    # Collect movies, shows, and ratings
     movies = []
     shows = []
+    movies_with_ratings = {}
     letterboxd_urls = {}
 
     # Loop through each row
@@ -121,10 +146,13 @@ def process_csv(file_path):
 
         if media_type == 'movie':
             movies.append(tmdb_id)
+            if 'Rating' in row and not pd.isnull(row['Rating']):
+                # Store rating if available
+                movies_with_ratings[tmdb_id] = int(row['Rating'])
         elif media_type == 'show':
             shows.append(tmdb_id)
     
-    return movies, shows, letterboxd_urls
+    return movies, shows, letterboxd_urls, movies_with_ratings
 
 # Function to retrieve watched history from Trakt
 def retrieve_trakt_history(access_token, client_id):
@@ -198,11 +226,13 @@ if __name__ == "__main__":
         print("Invalid choice, defaulting to 'now'.")
         watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # Use the .csv file with TMDB IDs
-    csv_file_path = 'watched_movies_tmdb.csv'
+    # Ask if the user wants to import ratings
+    print("Do you want to import ratings as well?")
+    import_ratings_choice = input("Type 'yes' or 'no': ").strip().lower()
 
-    # Process the CSV file and collect items
-    movies, shows, letterboxd_urls = process_csv(csv_file_path)
+    # Use the .csv file with TMDB IDs and ratings
+    csv_file_path = 'watched_movies_tmdb.csv'  # Make sure this path is correct
+    movies, shows, letterboxd_urls, movies_with_ratings = process_csv(csv_file_path)
 
     # Mark movies/shows as watched
     if mark_watched_batch(movies, shows, watched_at, access_token, client_id):
@@ -216,4 +246,14 @@ if __name__ == "__main__":
             # Compare CSV items with Trakt history
             compare_csv_and_history(movies, shows, trakt_history, letterboxd_urls)
 
+    # If the user chose to import ratings
+    if import_ratings_choice == 'yes' and movies_with_ratings:
+        # Import the ratings using the Trakt API
+        if import_ratings(movies_with_ratings, access_token, client_id):
+            print("Ratings have been successfully imported to Trakt.")
+        else:
+            print("There was an issue importing the ratings.")
+    else:
+        print("Skipping ratings import.")
+    
     print("All items have been processed.")
