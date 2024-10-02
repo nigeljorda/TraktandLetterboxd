@@ -79,6 +79,95 @@ def get_show_details(trakt_slug, access_token, client_id):
         print(f"Error retrieving show details for {trakt_slug}: {response.status_code} - {response.text}")
         return []
 
+# Function to retrieve the user's ratings for movies and shows from Trakt
+def get_trakt_ratings(access_token, client_id, retries=3):
+    trakt_url = f"{TRAKT_BASE_URL}/users/me/ratings"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    ratings = {'movies': {}, 'shows': {}}
+    page = 1
+    per_page = 100
+
+    while True:
+        attempt = 0
+        while attempt < retries:
+            response = requests.get(f"{trakt_url}?page={page}&limit={per_page}", headers=headers)
+
+            if response.status_code == 200:
+                items = response.json()
+                if not items:
+                    return ratings  # No more items to retrieve
+
+                # Separate ratings for movies and shows
+                for item in items:
+                    if 'movie' in item:
+                        movie = item['movie']
+                        tmdb_id = movie.get('ids', {}).get('tmdb', None)
+                        if tmdb_id:
+                            ratings['movies'][tmdb_id] = item.get('rating', None)
+                    elif 'show' in item:
+                        show = item['show']
+                        tmdb_id = show.get('ids', {}).get('tmdb', None)
+                        if tmdb_id:
+                            ratings['shows'][tmdb_id] = item.get('rating', None)
+
+                print(f"Retrieved page {page} of ratings...")
+                page += 1
+                break
+            elif response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 1))
+                print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
+                time.sleep(retry_after)
+                attempt += 1
+            else:
+                print(f"Failed to retrieve ratings. Response: {response.status_code} - {response.text}")
+                return ratings
+
+    return ratings
+
+# Function to retrieve the user's entire movie history from Trakt
+def get_trakt_history_movies(access_token, client_id, retries=3):
+    trakt_url = f"{TRAKT_BASE_URL}/users/me/history/movies"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    history_items = []
+    page = 1
+    per_page = 100
+
+    while True:
+        attempt = 0
+        while attempt < retries:
+            response = requests.get(f"{trakt_url}?page={page}&limit={per_page}", headers=headers)
+
+            if response.status_code == 200:
+                items = response.json()
+                if not items:
+                    return history_items  # No more items to retrieve
+                history_items.extend(items)
+                print(f"Retrieved page {page} of movie history...")
+                page += 1
+                break
+            elif response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 1))
+                print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
+                time.sleep(retry_after)
+                attempt += 1
+            else:
+                print(f"Failed to retrieve history. Response: {response.status_code} - {response.text}")
+                return []
+
+    return history_items
+
 # Function to retrieve the user's watched show progress from Trakt
 def get_trakt_show_progress(access_token, client_id, retries=3):
     trakt_url = f"{TRAKT_BASE_URL}/users/me/watched/shows"
@@ -127,10 +216,10 @@ def get_trakt_show_progress(access_token, client_id, retries=3):
 
     return progress_items
 
-# Function to create CSV for shows with progress and TMDB ID (removing Watch Date)
-def create_shows_csv(progress, access_token, client_id, filename):
+# Function to create CSV for shows with progress, TMDB ID, and ratings
+def create_shows_csv(progress, ratings, access_token, client_id, filename):
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['Title', 'Year', 'Seasons Watched', 'Completed', 'Last Watched Episode', 'TMDB ID']
+        fieldnames = ['Title', 'Year', 'Seasons Watched', 'Completed', 'Last Watched Episode', 'TMDB ID', 'Rating']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -164,56 +253,23 @@ def create_shows_csv(progress, access_token, client_id, filename):
             # Determine if the show is completed
             completed = 'Yes' if season_number == last_show_season and episode_number == last_show_episode else 'No'
 
+            # Get the rating for the show (if available), replace 'N/A' with an empty string
+            rating = ratings['shows'].get(tmdb_id, '')
+
             writer.writerow({
                 'Title': title, 
                 'Year': year, 
                 'Seasons Watched': num_seasons_watched, 
                 'Completed': completed,
                 'Last Watched Episode': last_watched_episode,
-                'TMDB ID': tmdb_id
+                'TMDB ID': tmdb_id,
+                'Rating': rating
             })
 
-# Function to retrieve the user's entire movie history from Trakt
-def get_trakt_history_movies(access_token, client_id, retries=3):
-    trakt_url = f"{TRAKT_BASE_URL}/users/me/history/movies"
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'trakt-api-version': '2',
-        'trakt-api-key': client_id
-    }
-
-    history_items = []
-    page = 1
-    per_page = 100
-
-    while True:
-        attempt = 0
-        while attempt < retries:
-            response = requests.get(f"{trakt_url}?page={page}&limit={per_page}", headers=headers)
-
-            if response.status_code == 200:
-                items = response.json()
-                if not items:
-                    return history_items  # No more items to retrieve
-                history_items.extend(items)
-                print(f"Retrieved page {page} of movie history...")
-                page += 1
-                break
-            elif response.status_code == 429:
-                retry_after = int(response.headers.get('Retry-After', 1))
-                print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
-                time.sleep(retry_after)
-                attempt += 1
-            else:
-                print(f"Failed to retrieve history. Response: {response.status_code} - {response.text}")
-                return []
-
-    return history_items
-
-def create_movies_csv(history, filename):
+# Function to create CSV for movies with history, TMDB ID, and ratings
+def create_movies_csv(history, ratings, filename):
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['Title', 'Year', 'TMDB ID']
+        fieldnames = ['Title', 'Year', 'TMDB ID', 'Rating']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -223,19 +279,26 @@ def create_movies_csv(history, filename):
                 title = movie.get('title', 'Unknown Title')
                 year = movie.get('year', 'Unknown Year')
                 tmdb_id = movie.get('ids', {}).get('tmdb', 'Unknown TMDB ID')
-                writer.writerow({'Title': title, 'Year': year, 'TMDB ID': tmdb_id})
+                
+                # Get the rating for the movie (if available), replace 'N/A' with an empty string
+                rating = ratings['movies'].get(tmdb_id, '')
+
+                writer.writerow({'Title': title, 'Year': year, 'TMDB ID': tmdb_id, 'Rating': rating})
+
 
 # Main function to run the script
 if __name__ == "__main__":
     # Authenticate with Trakt
     access_token, client_id = authenticate_trakt()
 
-    # Get history for movies and progress for shows
+    # Get history for movies, progress for shows, and ratings
     movie_history = get_trakt_history_movies(access_token, client_id)
     show_progress = get_trakt_show_progress(access_token, client_id)
+    ratings = get_trakt_ratings(access_token, client_id)
 
-    # Create CSV files
-    create_movies_csv(movie_history, 'trakt_movies.csv')
-    create_shows_csv(show_progress, access_token, client_id, 'trakt_shows.csv')
+    # Create CSV files for movies and shows, including ratings
+    create_movies_csv(movie_history, ratings, 'trakt_movies_with_ratings.csv')
+    create_shows_csv(show_progress, ratings, access_token, client_id, 'trakt_shows_with_ratings.csv')
 
-    print("CSV files created successfully.")
+    print("CSV files created successfully with ratings.")
+

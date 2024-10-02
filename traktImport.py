@@ -34,15 +34,16 @@ def get_client_credentials():
 def authenticate_trakt():
     client_id, client_secret = get_client_credentials()
 
-    # OAuth2 PIN-based authorization URL
+    # URL for OAuth2 PIN-based authorization
     auth_url = f"https://trakt.tv/oauth/authorize?response_type=code&client_id={client_id}&redirect_uri=urn:ietf:wg:oauth:2.0:oob"
     print(f"Opening browser to authorize Trakt. Please enter the PIN code provided.")
     
+    # Open the browser automatically for the user
     webbrowser.open(auth_url)
 
     pin = input("Enter the PIN code you received from Trakt: ").strip()
 
-    # Token request payload
+    # Prepare the token request payload
     token_payload = {
         "code": pin,
         "client_id": client_id,
@@ -64,51 +65,16 @@ def authenticate_trakt():
         print(f"Error authenticating with Trakt: {response.status_code} - {response.text}")
         exit()
 
-# Function to fetch the user's watch history for movies or shows
-def fetch_watched_history(type_, access_token, client_id):
-    trakt_url = f"{TRAKT_BASE_URL}/sync/history/{type_}?limit=10000"
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'trakt-api-version': '2',
-        'trakt-api-key': client_id
-    }
+# Function to retry requests on rate limit (429)
+def handle_rate_limit(response):
+    if response.status_code == 429:
+        retry_after = int(response.headers.get('Retry-After', 1))
+        print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying...")
+        time.sleep(retry_after)
+        return True
+    return False
 
-    response = requests.get(trakt_url, headers=headers)
-
-    if response.status_code == 200:
-        history = response.json()
-        if type_ == 'movies':
-            return {item['movie']['ids']['tmdb'] for item in history}
-        elif type_ == 'shows':
-            return {(item['show']['ids']['tmdb'], item['episode']['season'], item['episode']['number']) for item in history}
-    else:
-        print(f"Error fetching watch history: {response.status_code} - {response.text}")
-        return set()
-
-# Function to mark movies as watched on Trakt
-def mark_movies_watched(movies, watched_at, access_token, client_id):
-    trakt_url = f"{TRAKT_BASE_URL}/sync/history"
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'trakt-api-version': '2',
-        'trakt-api-key': client_id
-    }
-
-    # Prepare payload for movies
-    payload = {
-        "movies": [{"ids": {"tmdb": movie_id}, "watched_at": watched_at} for movie_id in movies]
-    }
-
-    response = requests.post(trakt_url, headers=headers, json=payload)
-
-    if response.status_code == 201:
-        print("Successfully marked movies as watched.")
-    else:
-        print(f"Failed to mark movies as watched. Response: {response.status_code} - {response.text}")
-
-# Function to mark shows as watched, episode by episode with retry mechanism
+# Function to mark shows as watched, season by season up to the last watched episode
 def mark_episodes_watched(shows, watched_at, access_token, client_id, retries=5):
     trakt_url = f"{TRAKT_BASE_URL}/sync/history"
     headers = {
@@ -118,45 +84,45 @@ def mark_episodes_watched(shows, watched_at, access_token, client_id, retries=5)
         'trakt-api-key': client_id
     }
 
-    # Prepare payload for shows with episodes
-    payload = {
-        "shows": [{
-            "ids": {"tmdb": show_id},
-            "seasons": [{
-                "number": int(season_number),
-                "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, int(last_ep) + 1)]
-            }]
-        } for show_id, season_number, last_ep in shows]
-    }
-
     attempt = 0
     while attempt < retries:
-        response = requests.post(trakt_url, headers=headers, json=payload)
-        
-        if response.status_code == 201:
-            print("Successfully marked episodes as watched.")
-            return
-        elif response.status_code == 429:
-            retry_after = int(response.headers.get('Retry-After', 1))  # Default to 1 second if header not present
-            print(f"Rate limit exceeded (429). Retrying in {retry_after} seconds... (Attempt {attempt + 1}/{retries})")
-            time.sleep(retry_after)
-            attempt += 1
-        else:
-            print(f"Failed to mark episodes as watched. Response: {response.status_code} - {response.text}")
-            break
+        for show_id, last_season, last_ep in shows:
+            payload = {"shows": [{"ids": {"tmdb": show_id}, "seasons": []}]}
+
+            # Mark all episodes from previous seasons as watched
+            for season in range(1, last_season):
+                season_payload = {
+                    "number": season,
+                    "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, 100)]  # Assuming 100 episodes max
+                }
+                payload["shows"][0]["seasons"].append(season_payload)
+
+            # Mark episodes from the last season up to the specified last episode
+            season_payload = {
+                "number": last_season,
+                "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, last_ep + 1)]
+            }
+            payload["shows"][0]["seasons"].append(season_payload)
+
+            response = requests.post(trakt_url, headers=headers, json=payload)
+            
+            if response.status_code == 201:
+                print(f"Successfully marked {show_id} up to season {last_season}, episode {last_ep} as watched.")
+            elif handle_rate_limit(response):
+                continue
+            else:
+                print(f"Failed to mark episodes for {show_id}. Response: {response.status_code} - {response.text}")
+                break
+
+        if response.status_code != 429:
+            return  # Stop retrying if not rate limit error
 
     if attempt == retries:
         print(f"Failed after {retries} attempts due to rate limits.")
 
-# Function to process movies CSV and skip already watched movies
-def process_movies_csv(file_path, already_watched_movies):
-    data = pd.read_csv(file_path)
-    # Filter out movies that are already watched
-    movies = [tmdb_id for tmdb_id in data['TMDB ID'] if tmdb_id not in already_watched_movies]
-    return movies
 
 # Function to process shows CSV and skip already watched episodes
-def process_shows_csv(file_path, already_watched_shows):
+def process_shows_csv(file_path):
     data = pd.read_csv(file_path)
     shows = []
     
@@ -170,14 +136,81 @@ def process_shows_csv(file_path, already_watched_shows):
             season_number = int(match.group(1))  # Extract season number
             last_ep = int(match.group(2))        # Extract episode number
             
-            # Skip if the episodes are already watched
-            already_watched_episodes = {(show_id, season_number, ep) for ep in range(1, last_ep + 1)}
-            if not already_watched_episodes.intersection(already_watched_shows):
-                shows.append((show_id, season_number, last_ep))
+            shows.append((show_id, season_number, last_ep))
         else:
             print(f"Warning: Could not parse season/episode from '{season_episode}' for show ID {show_id}")
     
     return shows
+
+# Function to mark movies as watched with retry mechanism
+def mark_movies_watched(movies, watched_at, access_token, client_id, retries=5):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/history"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    payload = {
+        "movies": [{"ids": {"tmdb": movie_id}, "watched_at": watched_at} for movie_id in movies]
+    }
+
+    attempt = 0
+    while attempt < retries:
+        response = requests.post(trakt_url, headers=headers, json=payload)
+        
+        if response.status_code == 201:
+            print("Successfully marked movies as watched.")
+            return
+        elif handle_rate_limit(response):
+            continue
+        else:
+            print(f"Failed to mark movies as watched. Response: {response.status_code} - {response.text}")
+            break
+
+    if attempt == retries:
+        print(f"Failed after {retries} attempts due to rate limits.")
+
+# Function to process the movies CSV file
+def process_movies_csv(file_path):
+    data = pd.read_csv(file_path)
+    return list(data['TMDB ID'])
+
+# Function to sync ratings to Trakt with retries
+def import_ratings(movies, shows, access_token, client_id, retries=3):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/ratings"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    payload = {
+        "movies": [{"ids": {"tmdb": movie_id}, "rating": rating} for movie_id, rating in movies.items() if rating != ''],
+        "shows": [{"ids": {"tmdb": show_id}, "rating": rating} for show_id, rating in shows.items() if rating != '']
+    }
+
+    if not payload['movies'] and not payload['shows']:
+        print("No ratings to import.")
+        return
+
+    attempt = 0
+    while attempt < retries:
+        response = requests.post(trakt_url, headers=headers, json=payload)
+        
+        if response.status_code == 201:
+            print("Successfully imported ratings.")
+            return
+        elif handle_rate_limit(response):
+            continue
+        else:
+            print(f"Failed to import ratings. Response: {response.status_code} - {response.text}")
+            break
+
+    if attempt == retries:
+        print(f"Failed after {retries} attempts due to rate limits.")
 
 # Main function to run the script
 if __name__ == "__main__":
@@ -197,18 +230,15 @@ if __name__ == "__main__":
         print("Invalid choice, defaulting to 'now'.")
         watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # Fetch already watched history for movies and shows
-    watched_movies = fetch_watched_history('movies', access_token, client_id)
-    watched_shows = fetch_watched_history('shows', access_token, client_id)
+        # Process the CSV files for movies and shows
+    movies_csv = 'trakt_movies_with_ratings.csv'
+    shows_csv = 'trakt_shows_with_ratings.csv'
 
-    # Process the CSV files and skip already watched items
-    movies_csv = 'trakt_movies.csv'
-    shows_csv = 'trakt_shows.csv'
+    # Process the movies and shows
+    movies = process_movies_csv(movies_csv)
+    shows = process_shows_csv(shows_csv)
 
-    movies = process_movies_csv(movies_csv, watched_movies)
-    shows = process_shows_csv(shows_csv, watched_shows)
-
-        # Mark movies and shows as watched
+    # Mark movies and shows as watched
     if movies:
         mark_movies_watched(movies, watched_at, access_token, client_id)
     else:
@@ -219,4 +249,13 @@ if __name__ == "__main__":
     else:
         print("No new shows to mark as watched.")
 
-    print("All movies and shows have been processed.")
+    # Import ratings for both movies and shows
+    movies_with_ratings = pd.read_csv(movies_csv).set_index('TMDB ID')['Rating'].dropna().to_dict()
+    shows_with_ratings = pd.read_csv(shows_csv).set_index('TMDB ID')['Rating'].dropna().to_dict()
+
+    if movies_with_ratings or shows_with_ratings:
+        import_ratings(movies_with_ratings, shows_with_ratings, access_token, client_id)
+    else:
+        print("No new ratings to import.")
+
+    print("All movies, shows, and ratings have been processed.")
