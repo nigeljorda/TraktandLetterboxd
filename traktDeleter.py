@@ -148,7 +148,6 @@ def delete_trakt_ratings(ratings_items, access_token, client_id, retries=3):
 
     print(f"Failed to delete ratings after {retries} attempts due to rate limits.")
 
-
 # Function to retrieve the user's entire history from Trakt
 def get_trakt_history(access_token, client_id, retries=3):
     trakt_url = f"{TRAKT_BASE_URL}/users/me/history"
@@ -227,6 +226,131 @@ def delete_trakt_history(history_items, access_token, client_id, retries=3):
 
     print(f"Failed to delete history after {retries} attempts due to rate limits.")
 
+# Function to retrieve the watchlist from Trakt
+def get_trakt_watchlist(access_token, client_id, retries=3):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/watchlist"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    watchlist_items = []
+    page = 1
+    per_page = 100
+
+    while True:
+        attempt = 0
+        while attempt < retries:
+            response = requests.get(f"{trakt_url}?page={page}&limit={per_page}", headers=headers)
+
+            if response.status_code == 200:
+                items = response.json()
+                if not items:
+                    return watchlist_items  # No more items to retrieve
+                watchlist_items.extend(items)
+                print(f"Retrieved page {page} of watchlist...")
+                page += 1
+                break
+            elif response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 1))
+                print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
+                time.sleep(retry_after)
+                attempt += 1
+            else:
+                print(f"Failed to retrieve watchlist. Response: {response.status_code} - {response.text}")
+                return []
+
+    return watchlist_items
+
+# Function to remove items from Trakt watchlist
+def delete_trakt_watchlist(watchlist_items, access_token, client_id, retries=3):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/watchlist/remove"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    movies = [{"ids": item['movie']['ids']} for item in watchlist_items if item['type'] == 'movie']
+    shows = [{"ids": item['show']['ids']} for item in watchlist_items if item['type'] == 'show']
+    episodes = [{"ids": item['episode']['ids']} for item in watchlist_items if item['type'] == 'episode']
+
+    if not movies and not shows and not episodes:
+        print("No watchlist items to delete.")
+        return
+
+    payload = {
+        "movies": movies,
+        "shows": shows,
+        "episodes": episodes
+    }
+
+    print(f"Deleting {len(movies)} movie watchlist items, {len(shows)} show watchlist items, and {len(episodes)} episode watchlist items...")
+
+    attempt = 0
+    while attempt < retries:
+        response = requests.post(trakt_url, headers=headers, json=payload)
+
+        if response.status_code == 200:
+            print("Successfully deleted all watchlist items.")
+            return
+        elif response.status_code == 429:
+            retry_after = int(response.headers.get('Retry-After', 1))
+            print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
+            time.sleep(retry_after)
+            attempt += 1
+        else:
+            print(f"Failed to delete watchlist. Response: {response.status_code} - {response.text}")
+            return
+
+    print(f"Failed to delete watchlist after {retries} attempts due to rate limits.")
+
+# Function to delete all personal lists from Trakt
+def delete_all_trakt_lists(access_token, client_id, retries=3):
+    # First, get all the user's lists
+    trakt_url = f"{TRAKT_BASE_URL}/users/me/lists"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    attempt = 0
+    while attempt < retries:
+        response = requests.get(trakt_url, headers=headers)
+
+        if response.status_code == 200:
+            lists = response.json()
+            if not lists:
+                print("No lists to delete.")
+                return
+
+            for trakt_list in lists:
+                list_id = trakt_list['ids']['slug']
+                delete_url = f"{TRAKT_BASE_URL}/users/me/lists/{list_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+
+                if delete_response.status_code == 204:
+                    print(f"Successfully deleted list: {trakt_list['name']}")
+                else:
+                    print(f"Failed to delete list {trakt_list['name']}. Response: {delete_response.status_code} - {delete_response.text}")
+
+            return
+        elif response.status_code == 429:
+            retry_after = int(response.headers.get('Retry-After', 1))
+            print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
+            time.sleep(retry_after)
+            attempt += 1
+        else:
+            print(f"Failed to retrieve lists. Response: {response.status_code} - {response.text}")
+            return
+
+    print(f"Failed to retrieve or delete lists after {retries} attempts due to rate limits.")
+
 # Main function to run the script
 if __name__ == "__main__":
     # Authenticate with Trakt
@@ -259,5 +383,29 @@ if __name__ == "__main__":
             print("No history found to delete.")
     else:
         print("Skipping history deletion.")
+
+    # Ask the user if they want to remove everything from watchlist
+    delete_watchlist_choice = input("Do you want to remove all items from your watchlist? Type 'yes' to confirm or 'no' to skip: ").strip().lower()
+
+    if delete_watchlist_choice == 'yes':
+        # Process and delete the user's watchlist items
+        print("Starting watchlist deletion process...")
+        watchlist_items = get_trakt_watchlist(access_token, client_id)
+        if watchlist_items:
+            delete_trakt_watchlist(watchlist_items, access_token, client_id)
+        else:
+            print("No watchlist items found to delete.")
+    else:
+        print("Skipping watchlist deletion.")
+
+    # Ask the user if they want to delete all lists
+    delete_lists_choice = input("Do you want to delete all your personal lists? Type 'yes' to confirm or 'no' to skip: ").strip().lower()
+
+    if delete_lists_choice == 'yes':
+        # Process and delete all personal lists
+        print("Starting lists deletion process...")
+        delete_all_trakt_lists(access_token, client_id)
+    else:
+        print("Skipping lists deletion.")
 
     print("Process completed.")

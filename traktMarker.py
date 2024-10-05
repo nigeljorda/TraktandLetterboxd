@@ -72,6 +72,45 @@ def handle_rate_limit(response):
         return True
     return False
 
+# Function to get the seasons and episode counts for a show from the Trakt API
+def get_seasons_and_episodes(show_id, access_token, client_id):
+    trakt_url = f"{TRAKT_BASE_URL}/shows/{show_id}/seasons"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    response = requests.get(trakt_url, headers=headers)
+
+    if response.status_code == 200:
+        seasons = response.json()
+        seasons_info = {}
+
+        # For each season, fetch the number of episodes (excluding Season 0 - specials)
+        for season in seasons:
+            season_number = season['number']
+            if season_number == 0:
+                continue  # Skip season 0 (specials)
+            
+            # Fetch the episode count for the season
+            season_url = f"{TRAKT_BASE_URL}/shows/{show_id}/seasons/{season_number}/episodes"
+            season_response = requests.get(season_url, headers=headers)
+
+            if season_response.status_code == 200:
+                episodes = season_response.json()
+                episode_count = len(episodes)
+                seasons_info[season_number] = episode_count
+            else:
+                print(f"Error fetching episodes for season {season_number} of show {show_id}.")
+                seasons_info[season_number] = 0  # Assume 0 episodes on error, can handle this later
+
+        return seasons_info
+    else:
+        print(f"Error fetching seasons for show {show_id}. Response: {response.status_code} - {response.text}")
+        return {}
+
 # Function to mark episodes as watched, season by season up to the last watched episode
 def mark_episodes_watched(show_id, last_season, last_ep, watched_at, access_token, client_id, retries=5):
     trakt_url = f"{TRAKT_BASE_URL}/sync/history"
@@ -86,9 +125,10 @@ def mark_episodes_watched(show_id, last_season, last_ep, watched_at, access_toke
 
     # Mark all episodes from previous seasons as watched
     for season in range(1, last_season):
+        episode_count = seasons_info[season]
         season_payload = {
             "number": season,
-            "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, 100)]  # Assuming 100 episodes max
+            "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, episode_count + 1)]
         }
         payload["shows"][0]["seasons"].append(season_payload)
 
@@ -135,35 +175,64 @@ def parse_season_episode(season_episode):
         print(f"Error: Invalid season/episode format '{season_episode}'")
         exit()
 
+# Function to validate the episode number based on the chosen season
+def validate_episode_number(season, episode, seasons_info):
+    if season in seasons_info:
+        if episode <= seasons_info[season]:
+            return True
+        else:
+            print(f"Season {season} only has {seasons_info[season]} episodes. Please input a valid episode number.")
+            return False
+    else:
+        print(f"Season {season} does not exist.")
+        return False
+
 # Main function to run the script
 if __name__ == "__main__":
     # Authenticate with Trakt
     access_token, client_id = authenticate_trakt()
 
-    # Ask the user for the show link and last watched episode
-    trakt_show_url = input("Enter the Trakt show link (e.g., https://trakt.tv/shows/the-lord-of-the-rings-the-rings-of-power): ").strip()
-    last_watched_episode = input("Enter the last watched episode in the format SxExx (e.g., S2E3): ").strip()
+    while True:  # Start loop for multiple shows
+        # Ask the user for the show link
+        trakt_show_url = input("Enter the Trakt show link (e.g., https://trakt.tv/shows/the-lord-of-the-rings-the-rings-of-power): ").strip()
 
-    # Extract show slug from the URL
-    show_slug = extract_show_slug(trakt_show_url)
+        # Extract show slug from the URL
+        show_slug = extract_show_slug(trakt_show_url)
 
-    # Parse the last watched episode input
-    last_season, last_episode = parse_season_episode(last_watched_episode)
+        # Fetch and display seasons and episode counts for the show
+        seasons_info = get_seasons_and_episodes(show_slug, access_token, client_id)
+        print("Available seasons and episode counts (Season 0 - Specials is excluded):")
+        for season, episode_count in seasons_info.items():
+            print(f"Season {season}: {episode_count} episodes")
 
-    # Ask the user if they want to mark watched episodes as 'now' or 'release date'
-    print("Do you want to mark episodes watched as 'now' or on the 'release date'?")
-    watched_choice = input("Type 'now' or 'release date': ").strip().lower()
+        # Ask the user for the last watched season and episode
+        while True:
+            last_watched_episode = input("Enter the last watched episode in the format SxExx (e.g., S2E3): ").strip()
+            last_season, last_episode = parse_season_episode(last_watched_episode)
+            
+            # Validate the episode number
+            if validate_episode_number(last_season, last_episode, seasons_info):
+                break  # If valid, proceed; otherwise, ask again
 
-    # Handle the watched date
-    if watched_choice == 'now':
-        watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    elif watched_choice == 'release date':
-        watched_at = "released"  # Trakt will use the release date of the episode or movie
-    else:
-        print("Invalid choice, defaulting to 'now'.")
-        watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        # Ask the user if they want to mark watched episodes as 'now' or 'release date'
+        print("Do you want to mark episodes watched as 'now' or on the 'release date'?")
+        watched_choice = input("Type 'now' or 'release date': ").strip().lower()
 
-    # Mark episodes as watched
-    mark_episodes_watched(show_slug, last_season, last_episode, watched_at, access_token, client_id)
+        # Handle the watched date
+        if watched_choice == 'now':
+            watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        elif watched_choice == 'release date':
+            watched_at = "released"  # Trakt will use the release date of the episode or movie
+        else:
+            print("Invalid choice, defaulting to 'now'.")
+            watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    print("All episodes up to the given one have been marked as watched.")
+        # Mark episodes as watched
+        mark_episodes_watched(show_slug, last_season, last_episode, watched_at, access_token, client_id)
+
+        # Ask if the user wants to process another show
+        another_show = input("Do you want to mark another show as watched? (yes/no): ").strip().lower()
+
+        if another_show != 'yes':
+            print("All episodes up to the given one have been marked as watched.")
+            break  # Exit the loop if the user does not want to continue
