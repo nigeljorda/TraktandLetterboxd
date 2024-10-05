@@ -14,6 +14,7 @@ This repository provides various Python scripts to interact with Letterboxd and 
 - **Traktbackup**: Backup all your watched data from your Trakt account.
 - **Traktimporter**: Import a previously backed-up Trakt data file into your Trakt account.
 - **Trakt2Letterboxd**: Convert Traktbackup .csv files to a .csv file that can be imported on Letterboxd.
+- **Traktmarker**: Mark every episode as watched until a specific episode.
 
 ## Installation
 
