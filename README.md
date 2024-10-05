@@ -1,6 +1,6 @@
 # traktscripts
 
-# Movie and Show Data Management Scripts
+# Scripts to make your life easier on Trakt.tv and Letterboxd.com
 
 This repository provides various Python scripts to interact with Letterboxd and Trakt.tv to manage your watched movie and show data. Below is an overview of what each script does and how you can use them.
 
@@ -13,6 +13,7 @@ This repository provides various Python scripts to interact with Letterboxd and 
 - **Traktdeleter**: Delete all watched entries on your Trakt account.
 - **Traktbackup**: Backup all your watched data from your Trakt account.
 - **Traktimporter**: Import a previously backed-up Trakt data file into your Trakt account.
+- **Trakt2Letterboxd**: Convert Traktbackup .csv files to a .csv file that can be imported on Letterboxd.
 
 ## Installation
 
