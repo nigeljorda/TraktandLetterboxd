@@ -6,6 +6,8 @@ This repository provides various Python scripts to interact with Letterboxd and 
 
 ## Scripts
 
+### Trakt
+
 - **Lbhistory**: Export your watched movies from Letterboxd.
 - **Trakthistory**: Import watched movies from Letterboxd into Trakt.
 - **Lblist**: Export a Letterboxd list into a `.csv` format.
