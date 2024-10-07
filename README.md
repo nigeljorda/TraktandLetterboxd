@@ -19,6 +19,7 @@ This repository provides various Python scripts to interact with Letterboxd and 
 ### Letterboxd
 - **lbhHistory**: Export your watched movies from Letterboxd.
 - **lbList**: Export a Letterboxd list into a `.csv` format.
+- **letterboxdCompare**: Compare what User 1 has watched but User 2 hasn't watched.
 
 ## Installation
 
