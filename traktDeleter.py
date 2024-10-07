@@ -264,7 +264,7 @@ def get_trakt_watchlist(access_token, client_id, retries=3):
 
     return watchlist_items
 
-# Function to remove items from Trakt watchlist
+# Function to remove items from Trakt watchlist (including seasons)
 def delete_trakt_watchlist(watchlist_items, access_token, client_id, retries=3):
     trakt_url = f"{TRAKT_BASE_URL}/sync/watchlist/remove"
     headers = {
@@ -277,18 +277,20 @@ def delete_trakt_watchlist(watchlist_items, access_token, client_id, retries=3):
     movies = [{"ids": item['movie']['ids']} for item in watchlist_items if item['type'] == 'movie']
     shows = [{"ids": item['show']['ids']} for item in watchlist_items if item['type'] == 'show']
     episodes = [{"ids": item['episode']['ids']} for item in watchlist_items if item['type'] == 'episode']
+    seasons = [{"ids": item['season']['ids']} for item in watchlist_items if item['type'] == 'season']
 
-    if not movies and not shows and not episodes:
+    if not movies and not shows and not episodes and not seasons:
         print("No watchlist items to delete.")
         return
 
     payload = {
         "movies": movies,
         "shows": shows,
-        "episodes": episodes
+        "episodes": episodes,
+        "seasons": seasons
     }
 
-    print(f"Deleting {len(movies)} movie watchlist items, {len(shows)} show watchlist items, and {len(episodes)} episode watchlist items...")
+    print(f"Deleting {len(movies)} movie watchlist items, {len(shows)} show watchlist items, {len(episodes)} episode watchlist items, and {len(seasons)} season watchlist items...")
 
     attempt = 0
     while attempt < retries:
@@ -308,7 +310,8 @@ def delete_trakt_watchlist(watchlist_items, access_token, client_id, retries=3):
 
     print(f"Failed to delete watchlist after {retries} attempts due to rate limits.")
 
-# Function to delete all personal lists from Trakt
+
+# Function to delete all personal lists from Trakt with retry mechanism
 def delete_all_trakt_lists(access_token, client_id, retries=3):
     # First, get all the user's lists
     trakt_url = f"{TRAKT_BASE_URL}/users/me/lists"
@@ -329,15 +332,27 @@ def delete_all_trakt_lists(access_token, client_id, retries=3):
                 print("No lists to delete.")
                 return
 
+            # Loop through each list and delete
             for trakt_list in lists:
                 list_id = trakt_list['ids']['slug']
                 delete_url = f"{TRAKT_BASE_URL}/users/me/lists/{list_id}"
-                delete_response = requests.delete(delete_url, headers=headers)
 
-                if delete_response.status_code == 204:
-                    print(f"Successfully deleted list: {trakt_list['name']}")
-                else:
-                    print(f"Failed to delete list {trakt_list['name']}. Response: {delete_response.status_code} - {delete_response.text}")
+                # Retry loop for deleting a list
+                list_attempt = 0
+                while list_attempt < retries:
+                    delete_response = requests.delete(delete_url, headers=headers)
+
+                    if delete_response.status_code == 204:
+                        print(f"Successfully deleted list: {trakt_list['name']}")
+                        break
+                    elif delete_response.status_code == 429:
+                        retry_after = int(delete_response.headers.get('Retry-After', 1))
+                        print(f"Rate limit exceeded (429) for list {trakt_list['name']}. Waiting {retry_after} seconds before retrying... (Attempt {list_attempt+1}/{retries})")
+                        time.sleep(retry_after)
+                        list_attempt += 1
+                    else:
+                        print(f"Failed to delete list {trakt_list['name']}. Response: {delete_response.status_code} - {delete_response.text}")
+                        break
 
             return
         elif response.status_code == 429:
@@ -350,6 +365,7 @@ def delete_all_trakt_lists(access_token, client_id, retries=3):
             return
 
     print(f"Failed to retrieve or delete lists after {retries} attempts due to rate limits.")
+
 
 # Main function to run the script
 if __name__ == "__main__":

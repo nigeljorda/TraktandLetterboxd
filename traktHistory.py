@@ -126,6 +126,31 @@ def import_ratings(movies_with_ratings, access_token, client_id):
         print(f"Failed to import ratings. Response: {response.status_code} - {response.text}")
         return False
 
+# Function to import movies to the user's watchlist
+def import_watchlist(movies, shows, access_token, client_id):
+    trakt_url = f"{TRAKT_BASE_URL}/sync/watchlist"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': client_id
+    }
+
+    # Prepare the payload for watchlist import
+    payload = {
+        "movies": [{"ids": {"tmdb": movie_id}} for movie_id in movies],
+        "shows": [{"ids": {"tmdb": show_id}} for show_id in shows]
+    }
+
+    response = requests.post(trakt_url, headers=headers, json=payload)
+
+    if response.status_code == 201:
+        print("Successfully imported watchlist.")
+        return True
+    else:
+        print(f"Failed to import watchlist. Response: {response.status_code} - {response.text}")
+        return False
+
 # Function to process the CSV file and collect items for the batch request
 def process_csv(file_path):
     # Read the CSV file
@@ -198,7 +223,7 @@ def compare_csv_and_history(csv_movies, csv_shows, trakt_history, letterboxd_url
     # Compare CSV shows with Trakt show history
     missing_shows = [show for show in csv_shows if show not in trakt_show_ids]
 
-    # Report missing items
+        # Report missing items
     if missing_movies or missing_shows:
         print("\nThe following items were not marked as watched on Trakt:")
         for tmdb_id in missing_movies:
@@ -230,6 +255,10 @@ if __name__ == "__main__":
     print("Do you want to import ratings as well?")
     import_ratings_choice = input("Type 'yes' or 'no': ").strip().lower()
 
+    # Ask if the user wants to import their watchlist
+    print("Do you want to import your watchlist as well?")
+    import_watchlist_choice = input("Type 'yes' or 'no': ").strip().lower()
+
     # Use the .csv file with TMDB IDs and ratings
     csv_file_path = 'watched_movies_tmdb.csv'  # Make sure this path is correct
     movies, shows, letterboxd_urls, movies_with_ratings = process_csv(csv_file_path)
@@ -256,4 +285,15 @@ if __name__ == "__main__":
     else:
         print("Skipping ratings import.")
     
+    # If the user chose to import their watchlist
+    if import_watchlist_choice == 'yes':
+        watchlist_csv_path = 'watchlist_tmdb.csv'  # Path to the watchlist CSV file
+        watchlist_movies, watchlist_shows, _, _ = process_csv(watchlist_csv_path)
+        if import_watchlist(watchlist_movies, watchlist_shows, access_token, client_id):
+            print("Watchlist has been successfully imported to Trakt.")
+        else:
+            print("There was an issue importing the watchlist.")
+    else:
+        print("Skipping watchlist import.")
+
     print("All items have been processed.")

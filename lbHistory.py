@@ -4,8 +4,9 @@ import csv
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Define the header for the output CSV
+# Define the header for the output CSV files
 csv_file = "watched_movies_tmdb.csv"
+watchlist_csv_file = "watchlist_tmdb.csv"
 csv_header = ["Letterboxd URL", "TMDB ID", "Type"]
 
 # Function to extract movie URLs and (optional) ratings from the ratings page
@@ -99,7 +100,7 @@ def get_last_page(base_url):
     return last_page_number
 
 # Function to crawl multiple pages using ThreadPoolExecutor
-def crawl_watched_movies(last_page, base_url):
+def crawl_movies(last_page, base_url):
     all_movie_urls = []
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = []
@@ -134,7 +135,7 @@ def crawl_detailed_movie_pages(movie_urls):
     return all_movie_data
 
 # Function to save the extracted data to a CSV file
-def save_to_csv(movie_data, ratings_data=None):
+def save_to_csv(movie_data, ratings_data=None, csv_file=csv_file):
     if ratings_data:
         csv_header.append("Rating")
     with open(csv_file, mode='w', newline='') as file:
@@ -167,6 +168,13 @@ def get_letterboxd_url():
         except requests.RequestException:
             print("Error accessing the page. Please check your internet connection and try again.")
 
+# Function to crawl the watchlist
+def crawl_watchlist(username):
+    watchlist_url = f"https://letterboxd.com/{username}/watchlist/"
+    last_page = get_last_page(watchlist_url)
+    watchlist_movies = crawl_movies(last_page, watchlist_url)  # Reusing the function to scrape watchlist
+    return watchlist_movies
+
 # Main function to run the script
 if __name__ == "__main__":
     # Get the user's Letterboxd URL and username
@@ -175,15 +183,18 @@ if __name__ == "__main__":
     # Ask if the user wants to scrape ratings
     scrape_ratings = input("Do you want to scrape ratings? (yes/no): ").strip().lower() == "yes"
     
+    # Ask if the user wants to scrape their watchlist
+    scrape_watchlist = input("Do you want to scrape your watchlist? (yes/no): ").strip().lower() == "yes"
+
     # Find the last page number for watched movies
     last_page = get_last_page(base_url)
     
     # Crawl all pages to collect movie URLs
-    movie_urls = crawl_watched_movies(last_page, base_url)
+    movie_urls = crawl_movies(last_page, base_url)
     
     # Crawl detailed movie pages to extract TMDb links
     movie_data = crawl_detailed_movie_pages(movie_urls)
-    
+
     ratings_data = None
     if scrape_ratings:
         # If ratings scraping is selected, scrape from the ratings page
@@ -194,7 +205,14 @@ if __name__ == "__main__":
             page_url = ratings_url + f"page/{page}/"
             ratings_data.update(extract_ratings(page_url))
     
-    # Save the data to CSV
+    # Optionally crawl the watchlist
+    if scrape_watchlist:
+        watchlist_urls = crawl_watchlist(username)
+        watchlist_data = crawl_detailed_movie_pages(watchlist_urls)
+        # Save the watchlist to a separate CSV
+        save_to_csv(watchlist_data, csv_file=watchlist_csv_file)
+
+    # Save the watched movies data to CSV
     save_to_csv(movie_data, ratings_data)
 
     print("Script finished.")
