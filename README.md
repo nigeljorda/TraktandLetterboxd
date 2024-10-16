@@ -1,4 +1,4 @@
-# traktscripts
+# Trakt and Letterboxd Tools v1.0
 
 ## Scripts to make your life easier on Trakt.tv and Letterboxd.com
 
@@ -6,20 +6,26 @@ This repository provides various Python scripts to interact with Letterboxd and 
 
 ## Scripts
 
-### Trakt
-
+### Letterboxd2TraktHistory
+- **lbhHistory**: Export your watched movies from Letterboxd into a .csv file.
 - **traktHistory**: Import watched movies from Letterboxd into Trakt. **First use Lbhistory to get your watched movies from Letterboxd**
-- **traktList**: Import a Letterboxd list into Trakt. **First use lbList to get your movies from a custom list**
-- **traktDeleter**: Delete all watched entries on your Trakt account.
-- **traktBackup**: Backup all your watched data from your Trakt account.
-- **traktImporter**: Import a previously backed-up Trakt data file into your Trakt account. **Only works with backups done by traktBackup.py**
-- **trakt2Letterboxd**: Convert Traktbackup .csv files to a .csv file that can be imported on Letterboxd. **First use traktBackup.py to convert your Trakt backup to work with Letterboxd import**
-- **traktMarker**: Mark every episode as watched until a specific episode.
 
-### Letterboxd
-- **lbhHistory**: Export your watched movies from Letterboxd.
+### Letterboxd2TraktList
 - **lbList**: Export a Letterboxd list into a `.csv` format.
+- **traktList**: Import a Letterboxd list into Trakt. **First use lbList to get your movies from a custom list**
+
+### LetterboxdTools
 - **letterboxdCompare**: Compare what User 1 has watched but User 2 hasn't watched.
+- **trakt2Letterboxd**: Convert Traktbackup .csv files to a .csv file that can be imported on Letterboxd. **First use traktBackup.py to convert your Trakt backup to work with Letterboxd import**
+
+### TraktBackup
+- **traktBackup**: Backup all your watched data, ratings, watchlist and lists from your Trakt account
+- **traktImporter**: Import a previously backed-up Trakt data file into your Trakt account. **Only works with backups done by traktBackup.py**
+
+### TraktTools
+- **traktDeleter**: Tool to delete history, ratings, watchlist and lists from a Trakt account.
+- **traktMarker**: Easy tool to mark every episode as watched until a specific episode.
+
 
 ## Installation
 
@@ -41,3 +47,5 @@ Before using any of the scripts, make sure to install the required dependencies 
 
 ```bash
 pip3 install beautifulsoup4 pandas requests
+
+###Forks are fine but credits to my work would be nice!
