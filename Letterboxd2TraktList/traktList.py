@@ -82,7 +82,7 @@ def create_trakt_list(access_token, client_id):
         "name": list_name,
         "description": list_description,
         "privacy": "public" if is_public else "private",
-        "display_numbers": False,
+        "display_numbers": True,
         "allow_comments": True
     }
     
@@ -234,7 +234,7 @@ def reorder_trakt_list(list_slug, items, access_token, client_id):
     else:
         print(f"Failed to reorder the list. Response: {response.status_code} - {response.text}")
 
-# Function to compare the items in the CSV with those in the Trakt list
+# Function to compare the items in the CSV with those in the Trakt list and show missing items with their rank
 def compare_trakt_and_csv(csv_items, trakt_items, letterboxd_urls):
     # Extract the TMDb IDs from the Trakt list items
     trakt_ids = []
@@ -248,16 +248,19 @@ def compare_trakt_and_csv(csv_items, trakt_items, letterboxd_urls):
     missing_items = []
     for item in csv_items:
         if item['tmdb_id'] not in trakt_ids:
-            missing_items.append(item['tmdb_id'])
-    
-    # Report missing items
+            missing_items.append(item)
+
+    # Report missing items with their rank (position)
     if missing_items:
         print("\nThe following items were not added to the Trakt list:")
-        for tmdb_id in missing_items:
-            print(f"TMDb ID: {tmdb_id}, Letterboxd URL: {letterboxd_urls.get(tmdb_id, 'No URL found')}")
+        for item in missing_items:
+            tmdb_id = item['tmdb_id']
+            rank = item['rank']  # Get the rank from the CSV
+            print(f"TMDb ID: {tmdb_id}, Rank: {rank}, Letterboxd URL: {letterboxd_urls.get(tmdb_id, 'No URL found')}")
         print("\nYou may need to add these items manually, as they do not exist on Trakt.")
     else:
         print("All items were successfully added to the Trakt list.")
+
 
 # Function to process the CSV file and collect items with their rank
 def process_csv_with_rank(file_path):
