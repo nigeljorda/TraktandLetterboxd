@@ -75,8 +75,8 @@ def handle_rate_limit(response):
         return True
     return False
 
-# Function to mark shows as watched, season by season up to the last watched episode
-def mark_episodes_watched(shows, watched_at, access_token, client_id, retries=5):
+# Function to mark episodes as watched with batch processing and specific IDs
+def mark_episodes_watched(episodes, access_token, client_id, retries=5):
     trakt_url = f"{TRAKT_BASE_URL}/sync/history"
     headers = {
         'Authorization': f'Bearer {access_token}',
@@ -85,66 +85,62 @@ def mark_episodes_watched(shows, watched_at, access_token, client_id, retries=5)
         'trakt-api-key': client_id
     }
 
+    # Create a batch payload for all episodes
+    payload = {
+        "episodes": []  # Using episodes directly to ensure each episode is marked
+    }
+
+    # Organize the episodes into the payload
+    for tmdb_id, tvdb_id, season, episode, watched_at in episodes:
+        # Choose TMDB ID if available, otherwise fallback to TVDB ID
+        episode_id = {"tmdb": tmdb_id} if pd.notna(tmdb_id) else {"tvdb": tvdb_id}
+        
+        # Add the episode with its specific watched date
+        payload["episodes"].append({
+            "ids": episode_id,
+            "season": season,
+            "episode": episode,
+            "watched_at": watched_at
+        })
+
     attempt = 0
     while attempt < retries:
-        for show_id, last_season, last_ep in shows:
-            payload = {"shows": [{"ids": {"tmdb": show_id}, "seasons": []}]}
+        response = requests.post(trakt_url, headers=headers, json=payload)
 
-            # Mark all episodes from previous seasons as watched
-            for season in range(1, last_season):
-                season_payload = {
-                    "number": season,
-                    "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, 100)]  # Assuming 100 episodes max
-                }
-                payload["shows"][0]["seasons"].append(season_payload)
-
-            # Mark episodes from the last season up to the specified last episode
-            season_payload = {
-                "number": last_season,
-                "episodes": [{"number": ep, "watched_at": watched_at} for ep in range(1, last_ep + 1)]
-            }
-            payload["shows"][0]["seasons"].append(season_payload)
-
-            response = requests.post(trakt_url, headers=headers, json=payload)
-            
-            if response.status_code == 201:
-                print(f"Successfully marked {show_id} up to season {last_season}, episode {last_ep} as watched.")
-            elif handle_rate_limit(response):
-                continue
-            else:
-                print(f"Failed to mark episodes for {show_id}. Response: {response.status_code} - {response.text}")
-                break
-
-        if response.status_code != 429:
-            return  # Stop retrying if not rate limit error
+        if response.status_code == 201:
+            print(f"Successfully marked episodes as watched.")
+            return
+        elif handle_rate_limit(response):
+            continue
+        else:
+            print(f"Failed to mark episodes as watched. Response: {response.status_code} - {response.text}")
+            break
 
     if attempt == retries:
         print(f"Failed after {retries} attempts due to rate limits.")
 
 
-# Function to process shows CSV and skip already watched episodes
-def process_shows_csv(file_path):
+
+# Function to process episodes CSV and extract TMDB ID, TVDB ID, season, episode, and watched date
+def process_shows_csv(file_path, watched_at):
     data = pd.read_csv(file_path)
-    shows = []
+    episodes = []
     
     for _, row in data.iterrows():
-        show_id = row['TMDB ID']
-        season_episode = row['Last Watched Episode']
-        
-        # Extract season and episode using regex
-        match = re.match(r'S(\d+)E(\d+)', season_episode)
-        if match:
-            season_number = int(match.group(1))  # Extract season number
-            last_ep = int(match.group(2))        # Extract episode number
-            
-            shows.append((show_id, season_number, last_ep))
-        else:
-            print(f"Warning: Could not parse season/episode from '{season_episode}' for show ID {show_id}")
+        tmdb_id = row['TMDB ID'] if pd.notna(row['TMDB ID']) else None
+        tvdb_id = row['TVDB ID'] if pd.notna(row['TVDB ID']) else None
+        season = row['Season']
+        episode = row['Episode']
+        watched_date = row['Watched At'] if watched_at == "csv" else watched_at  # Use watched date from CSV or provided
+
+        episodes.append((tmdb_id, tvdb_id, season, episode, watched_date))
     
-    return shows
+    return episodes
+
+
 
 # Function to mark movies as watched with retry mechanism
-def mark_movies_watched(movies, watched_at, access_token, client_id, retries=5):
+def mark_movies_watched(movies, access_token, client_id, retries=5):
     trakt_url = f"{TRAKT_BASE_URL}/sync/history"
     headers = {
         'Authorization': f'Bearer {access_token}',
@@ -153,8 +149,9 @@ def mark_movies_watched(movies, watched_at, access_token, client_id, retries=5):
         'trakt-api-key': client_id
     }
 
+    # Create payload for each movie with its watched date
     payload = {
-        "movies": [{"ids": {"tmdb": movie_id}, "watched_at": watched_at} for movie_id in movies]
+        "movies": [{"ids": {"tmdb": movie_id}, "watched_at": watched_at} for movie_id, watched_at in movies]
     }
 
     attempt = 0
@@ -173,10 +170,16 @@ def mark_movies_watched(movies, watched_at, access_token, client_id, retries=5):
     if attempt == retries:
         print(f"Failed after {retries} attempts due to rate limits.")
 
-# Function to process the movies CSV file
-def process_movies_csv(file_path):
+
+# Function to process the movies CSV file and return a list of movies with watched date
+def process_movies_csv(file_path, watched_at):
     data = pd.read_csv(file_path)
-    return list(data['TMDB ID'])
+    
+    if watched_at == "csv":
+        return [(row['TMDB ID'], row['Watched At']) for _, row in data.iterrows()]  # Use the watched date from CSV
+    else:
+        return [(row['TMDB ID'], watched_at) for _, row in data.iterrows()]  # Use the provided watched date (now or release date)
+
 
 # Function to sync ratings to Trakt with retries
 def import_ratings(movies, shows, access_token, client_id, retries=3):
@@ -359,64 +362,58 @@ if __name__ == "__main__":
     print("Do you want to import your watched history?")
     import_watched_history_choice = input("Type 'yes' or 'no': ").strip().lower()
 
-    # Import watched history if user agrees
     if import_watched_history_choice == 'yes':
-        import_watched_history(access_token, client_id)
+        # Ask the user for the watched date option
+        print("Do you want to mark everything watched as 'now', on the 'release date', or use 'watched date'?")
+        watched_choice = input("Type 'now', 'release date', or 'watched date': ").strip().lower()
 
-        # Ask the user to choose the watched date option (only after asking about history import)
-        print("Do you want to mark everything watched as 'now' or on the 'release date'?")
-        watched_choice = input("Type 'now' or 'release date': ").strip().lower()
-
-        # Handle the watched date
+        # Handle the watched date option
         if watched_choice == 'now':
             watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
         elif watched_choice == 'release date':
-            watched_at = "released"  # Trakt will use the release date of the episode or movie
+            watched_at = "released"
+        elif watched_choice == 'watched date':
+            watched_at = "csv"
         else:
             print("Invalid choice, defaulting to 'now'.")
             watched_at = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        # Process the CSV files for movies and shows only if the user chooses to import watched history
-        movies_csv = 'trakt_movies_with_ratings.csv'
-        shows_csv = 'trakt_shows_with_ratings.csv'
-
-        # Process the movies and shows
-        movies = process_movies_csv(movies_csv)
-        shows = process_shows_csv(shows_csv)
-
-        # Mark movies as watched
+        # Process and mark movies as watched
+        movies_csv = 'trakt_movies.csv'
+        movies = process_movies_csv(movies_csv, watched_at)
         if movies:
-            mark_movies_watched(movies, watched_at, access_token, client_id)
-        else:
-            print("No new movies to mark as watched.")
+            mark_movies_watched(movies, access_token, client_id)
 
-        # Mark shows/episodes as watched
-        if shows:
-            mark_episodes_watched(shows, watched_at, access_token, client_id)
-        else:
-            print("No new shows to mark as watched.")
+        # Process and mark episodes as watched
+        episodes_csv = 'trakt_episodes.csv'
+        episodes = process_shows_csv(episodes_csv, watched_at)
+        if episodes:
+            mark_episodes_watched(episodes, access_token, client_id)
+
 
     # Import ratings for both movies and shows, independent of watched history
-    movies_csv = 'trakt_movies_with_ratings.csv'
-    shows_csv = 'trakt_shows_with_ratings.csv'
+    movies_csv = 'trakt_movies.csv'  # Corrected file name
+    episodes_csv = 'trakt_episodes.csv'  # Corrected file name for episodes
 
     movies_df = pd.read_csv(movies_csv)
-    shows_df = pd.read_csv(shows_csv)
+    episodes_df = pd.read_csv(episodes_csv)
 
     if 'Rating' in movies_df.columns:
         movies_with_ratings = movies_df.set_index('TMDB ID')['Rating'].dropna().to_dict()
     else:
         movies_with_ratings = {}
 
-    if 'Rating' in shows_df.columns:
-        shows_with_ratings = shows_df.set_index('TMDB ID')['Rating'].dropna().to_dict()
+    if 'Rating' in episodes_df.columns:
+        episodes_with_ratings = episodes_df.set_index('TMDB ID')['Rating'].dropna().to_dict()
     else:
-        shows_with_ratings = {}
+        episodes_with_ratings = {}
 
-    if movies_with_ratings or shows_with_ratings:
-        import_ratings(movies_with_ratings, shows_with_ratings, access_token, client_id)
+    if movies_with_ratings or episodes_with_ratings:
+        import_ratings(movies_with_ratings, episodes_with_ratings, access_token, client_id)
     else:
         print("No ratings to import.")
+
+
 
     # Ask if the user wants to import the watchlist
     print("Do you want to import your watchlist from watchlist.csv?")

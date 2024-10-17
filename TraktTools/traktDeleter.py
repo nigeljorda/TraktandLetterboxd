@@ -215,6 +215,10 @@ def delete_trakt_history(history_items, access_token, client_id, retries=3):
         if response.status_code == 200:
             print("Successfully deleted all history items.")
             return
+        elif response.status_code == 504:
+            print(f"Gateway timeout (504). Retrying... (Attempt {attempt+1}/{retries})")
+            attempt += 1
+            time.sleep(5)  # Wait before retrying
         elif response.status_code == 429:
             retry_after = int(response.headers.get('Retry-After', 1))
             print(f"Rate limit exceeded (429). Waiting {retry_after} seconds before retrying... (Attempt {attempt+1}/{retries})")
@@ -224,7 +228,8 @@ def delete_trakt_history(history_items, access_token, client_id, retries=3):
             print(f"Failed to delete history. Response: {response.status_code} - {response.text}")
             return
 
-    print(f"Failed to delete history after {retries} attempts due to rate limits.")
+    print(f"Failed to delete history after {retries} attempts due to errors.")
+
 
 # Function to retrieve the watchlist from Trakt
 def get_trakt_watchlist(access_token, client_id, retries=3):

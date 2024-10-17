@@ -271,9 +271,9 @@ def get_trakt_history_movies(access_token, client_id, retries=3):
 
     return history_items
 
-# Function to retrieve the user's watched show progress from Trakt
-def get_trakt_show_progress(access_token, client_id, retries=3):
-    trakt_url = f"{TRAKT_BASE_URL}/users/me/watched/shows"
+# Function to retrieve the user's watched episodes history from Trakt
+def get_trakt_history_shows(access_token, client_id, retries=3):
+    trakt_url = f"{TRAKT_BASE_URL}/users/me/history/shows"
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json',
@@ -281,7 +281,7 @@ def get_trakt_show_progress(access_token, client_id, retries=3):
         'trakt-api-key': client_id
     }
 
-    progress_items = []
+    history_items = []
     page = 1
     per_page = 100
 
@@ -292,20 +292,10 @@ def get_trakt_show_progress(access_token, client_id, retries=3):
 
             if response.status_code == 200:
                 items = response.json()
-
-                # Get total page count from headers
-                total_pages = int(response.headers.get('X-Pagination-Page-Count', 1))
-
                 if not items:
-                    return progress_items  # No more items to retrieve
-                
-                progress_items.extend(items)
-                print(f"Retrieved page {page} of {total_pages} for show progress...")
-
-                # Stop if we reach the last page
-                if page >= total_pages:
-                    return progress_items
-
+                    return history_items  # No more items to retrieve
+                history_items.extend(items)
+                print(f"Retrieved page {page} of watched episodes history...")
                 page += 1
                 break
             elif response.status_code == 429:
@@ -314,71 +304,51 @@ def get_trakt_show_progress(access_token, client_id, retries=3):
                 time.sleep(retry_after)
                 attempt += 1
             else:
-                print(f"Failed to retrieve progress. Response: {response.status_code} - {response.text}")
+                print(f"Failed to retrieve watched episodes. Response: {response.status_code} - {response.text}")
                 return []
 
-    return progress_items
+    return history_items
 
-# Function to create CSV for shows with progress, TMDB ID, and ratings
-def create_shows_csv(progress, ratings, access_token, client_id, filename):
-    has_ratings = any(ratings['shows'].values())
-    fieldnames = ['Title', 'Year', 'Seasons Watched', 'Completed', 'Last Watched Episode', 'TMDB ID']
-    if has_ratings:
-        fieldnames.append('Rating')
+
+# Function to create CSV for watched episodes history, including TMDB and TVDB IDs
+def create_episodes_csv(history, filename='trakt_episodes.csv'):
+    fieldnames = ['Show Title', 'Season', 'Episode', 'Watched At', 'TMDB ID', 'TVDB ID']
 
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
-        for item in progress:
-            show = item['show']
-            title = show.get('title', 'Unknown Title')
-            year = show.get('year', 'Unknown Year')
-            trakt_slug = show.get('ids', {}).get('slug', None)
-            tmdb_id = show.get('ids', {}).get('tmdb', 'Unknown TMDB ID')
+        for item in history:
+            if 'episode' in item and 'show' in item:
+                episode = item['episode']
+                show = item['show']
+                title = show.get('title', 'Unknown Show Title')
+                
+                # Fetch season and episode details from the episode data
+                season = episode.get('season', 'Unknown Season')
+                episode_number = episode.get('number', 'Unknown Episode')
+                watched_at = item.get('watched_at', 'Unknown Watched Time')
 
-            # Get the number of seasons watched
-            seasons_watched = item.get('seasons', [])
-            num_seasons_watched = len(seasons_watched)
+                # Fetch episode's own TMDB and TVDB IDs
+                tmdb_id = episode.get('ids', {}).get('tmdb', 'Unknown TMDB ID')
+                tvdb_id = episode.get('ids', {}).get('tvdb', 'Unknown TVDB ID')
 
-            # Get detailed show info to verify completion
-            show_details = get_show_details(trakt_slug, access_token, client_id)
-            if show_details:
-                last_show_season = show_details[-1].get('number', None)  # Latest season number
-                last_show_episode = show_details[-1].get('episodes', [])[-1].get('number', None)  # Latest episode number
-            else:
-                last_show_season, last_show_episode = None, None
+                writer.writerow({
+                    'Show Title': title,
+                    'Season': season,
+                    'Episode': episode_number,
+                    'Watched At': watched_at,
+                    'TMDB ID': tmdb_id,
+                    'TVDB ID': tvdb_id
+                })
 
-            last_watched_episode = ''
-            if seasons_watched:
-                last_season = seasons_watched[-1]  # Last season watched
-                last_episode = last_season.get('episodes', [])[-1] if last_season.get('episodes') else {}
-                season_number = last_season.get('number', 'N/A')
-                episode_number = last_episode.get('number', 'N/A')
-                last_watched_episode = f"S{season_number}E{episode_number}"
-
-            # Determine if the show is completed
-            completed = 'Yes' if season_number == last_show_season and episode_number == last_show_episode else 'No'
-
-            row = {
-                'Title': title, 
-                'Year': year, 
-                'Seasons Watched': num_seasons_watched, 
-                'Completed': completed,
-                'Last Watched Episode': last_watched_episode,
-                'TMDB ID': tmdb_id
-            }
-
-            if has_ratings:
-                row['Rating'] = ratings['shows'].get(tmdb_id, '')
-
-            writer.writerow(row)
+    print(f"Saved {len(history)} watched episodes in {filename}.")
 
 
-# Function to create CSV for movies with history, TMDB ID, and ratings
-def create_movies_csv(history, ratings, filename):
+# Function to create CSV for movies with history, TMDB ID, ratings, and watched date
+def create_movies_csv(history, ratings, filename='trakt_movies.csv'):
     has_ratings = any(ratings['movies'].values())
-    fieldnames = ['Title', 'Year', 'TMDB ID']
+    fieldnames = ['Title', 'Year', 'TMDB ID', 'Watched At']  # Added 'Watched At'
     if has_ratings:
         fieldnames.append('Rating')
     
@@ -392,15 +362,24 @@ def create_movies_csv(history, ratings, filename):
                 title = movie.get('title', 'Unknown Title')
                 year = movie.get('year', 'Unknown Year')
                 tmdb_id = movie.get('ids', {}).get('tmdb', 'Unknown TMDB ID')
-                
-                row = {'Title': title, 'Year': year, 'TMDB ID': tmdb_id}
+                watched_at = item.get('watched_at', 'Unknown Watched Time')  # Extract watched date
+
+                row = {
+                    'Title': title, 
+                    'Year': year, 
+                    'TMDB ID': tmdb_id,
+                    'Watched At': watched_at  # Add watched date to CSV
+                }
+
                 if has_ratings:
                     row['Rating'] = ratings['movies'].get(tmdb_id, '')
 
                 writer.writerow(row)
 
+    print(f"Saved {len(history)} watched movies in {filename}.")
 
-# Main function to run the script
+
+
 if __name__ == "__main__":
     # Authenticate with Trakt
     access_token, client_id = authenticate_trakt()
@@ -414,9 +393,9 @@ if __name__ == "__main__":
     # Ask the user if they want to back up personal lists
     backup_lists = input("Do you want to back up your personal lists? (yes/no): ").strip().lower() == 'yes'
 
-    # Get history for movies, progress for shows, and ratings
+    # Get history for movies, watched episodes for shows, and ratings
     movie_history = get_trakt_history_movies(access_token, client_id)
-    show_progress = get_trakt_show_progress(access_token, client_id)
+    show_episodes_history = get_trakt_history_shows(access_token, client_id)
 
     # Optionally get ratings
     ratings = {'movies': {}, 'shows': {}}
@@ -424,8 +403,8 @@ if __name__ == "__main__":
         ratings = get_trakt_ratings(access_token, client_id)
 
     # Create CSV files for movies and shows, including ratings if requested
-    create_movies_csv(movie_history, ratings, 'trakt_movies_with_ratings.csv')
-    create_shows_csv(show_progress, ratings, access_token, client_id, 'trakt_shows_with_ratings.csv')
+    create_movies_csv(movie_history, ratings, 'trakt_movies.csv')
+    create_episodes_csv(show_episodes_history, 'trakt_episodes.csv')
 
     # Optionally back up the watchlist
     if backup_watchlist:

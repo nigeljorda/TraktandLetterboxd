@@ -13,13 +13,14 @@ This repository provides various Python scripts to interact with Letterboxd and 
 ### Letterboxd2TraktList
 - **lbList**: Export a Letterboxd list into a `.csv` format.
 - **traktList**: Import a Letterboxd list into Trakt. **First use lbList to get your movies from a custom list**
+- **lbPopular**: Export a popular feed of Letterboxd to .csv to import into Trakt. **Needs Selenium to work**
 
 ### LetterboxdTools
 - **letterboxdCompare**: Compare what User 1 has watched but User 2 hasn't watched.
-- **trakt2Letterboxd**: Convert Traktbackup .csv files to a .csv file that can be imported on Letterboxd. **First use traktBackup.py to convert your Trakt backup to work with Letterboxd import**
+- **trakt2Letterboxd**: Backups your Trakt History and converts it to a Letterboxd importable .csv for you.
 
 ### TraktBackup
-- **traktBackup**: Backup all your watched data, ratings, watchlist and lists from your Trakt account
+- **traktBackup**: Backup all your watched data, ratings, watchlist and lists from your Trakt account (Including watched date)
 - **traktImporter**: Import a previously backed-up Trakt data file into your Trakt account. **Only works with backups done by traktBackup.py**
 
 ### TraktTools
@@ -46,6 +47,6 @@ You need to include this Client ID and Client Secret in the scripts that interac
 Before using any of the scripts, make sure to install the required dependencies by running the following command:
 
 ```bash
-pip3 install beautifulsoup4 pandas requests
+pip3 install beautifulsoup4 pandas requests selenium
 
 ###Forks are fine but credits to my work would be nice!
